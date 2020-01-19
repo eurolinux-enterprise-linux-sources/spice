@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christophe Fergeau <cfergeau@redhat.com>
+Date: Wed, 20 Jun 2018 17:02:14 +0200
+Subject: [spice-server] ssl: Allow to use ECDH ciphers with OpenSSL 1.0
+
+Without an explicit call to SSL_CTX_set_ecdh_auto(reds->ctx, 1), OpenSSL
+1.0 (still used by el7) would not use ECDH ciphers (this is now
+automatic with OpenSSL 1.1.0). This commit adds this missing call. It's
+based on a suggestion from David Jasa
+
+Signed-off-by: Christophe Fergeau <cfergeau@redhat.com>
+Acked-by: Frediano Ziglio <fziglio@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=1566597
+---
+ server/reds.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/server/reds.c b/server/reds.c
+index 846e44d..a7b9c38 100644
+--- a/server/reds.c
++++ b/server/reds.c
+@@ -2955,6 +2955,7 @@ static int reds_init_ssl(RedsState *reds)
+     ssl_options |= SSL_OP_NO_COMPRESSION;
+ #endif
+     SSL_CTX_set_options(reds->ctx, ssl_options);
++    SSL_CTX_set_ecdh_auto(reds->ctx, 1);
+ 
+     /* Load our keys and certificates*/
+     return_code = SSL_CTX_use_certificate_chain_file(reds->ctx, reds->config->ssl_parameters.certs_file);

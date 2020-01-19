@@ -1,0 +1,167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christophe Fergeau <cfergeau@redhat.com>
+Date: Mon, 18 Jun 2018 12:39:37 +0200
+Subject: [spice-server] tls: Parse spice.cnf OpenSSL configuration file
+
+SPICE tries to use the OpenSSL system-wide defaults as much as possible
+for the TLS ciphers and protocols it uses. However, this is not enough
+for some customers who want it to use a more restrictive set of TLS
+features. spice-server should not try to override the system defaults
+OpenSSL uses, so this is not going to be hardcoded in spice-server code.
+
+This is addressed with crypto policies in recent fedoras, and is being
+solved upstream through https://github.com/openssl/openssl/pull/4848
+This issue has become pressing enough that we need to solve it in el7
+which unfortunately does not have any of these system-wide settings.
+
+As a stop-gap measure, this downstream-only patch adds a
+/etc/pki/tls/spice.cnf configuration file which can be used to configure
+the TLS ciphers/protocols used for SPICE. This is only meant to be a
+temporary solution, and will be superseded by crypto-policies when they
+land in RHEL.
+
+Signed-off-by: Christophe Fergeau <cfergeau@redhat.com>
+---
+ docs/Makefile.am |   1 +
+ server/reds.c    | 102 +++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 103 insertions(+)
+
+diff --git a/docs/Makefile.am b/docs/Makefile.am
+index 45667a6..909ed15 100644
+--- a/docs/Makefile.am
++++ b/docs/Makefile.am
+@@ -6,6 +6,7 @@ EXTRA_DIST =					\
+ 	spice_style.txt				\
+ 	spice_threading_model.html		\
+ 	spice_threading_model.txt		\
++	spice.cnf.sample			\
+ 	$(NULL)
+ 
+ if BUILD_MANUAL
+diff --git a/server/reds.c b/server/reds.c
+index 0af5643..846e44d 100644
+--- a/server/reds.c
++++ b/server/reds.c
+@@ -33,6 +33,7 @@
+ #include <sys/mman.h>
+ #include <ctype.h>
+ 
++#include <openssl/conf.h>
+ #include <openssl/err.h>
+ 
+ #if HAVE_SASL
+@@ -2827,6 +2828,102 @@ static gpointer openssl_global_init(gpointer arg)
+     return NULL;
+ }
+ 
++#define SPICE_OPENSSL_CNF_FILENAME "/etc/pki/tls/spice.cnf"
++
++static int reds_ssl_config_file_apply(RedsState *reds, STACK_OF(CONF_VALUE) *sect)
++{
++    int openssl_status;
++    int return_value = 0;
++    SSL_CONF_CTX *cctx = NULL;
++    unsigned int i;
++
++    cctx = SSL_CONF_CTX_new();
++    SSL_CONF_CTX_set_flags(cctx, SSL_CONF_FLAG_SERVER);
++    SSL_CONF_CTX_set_flags(cctx, SSL_CONF_FLAG_FILE);
++    SSL_CONF_CTX_set_ssl_ctx(cctx, reds->ctx);
++
++    for (i = 0; i < sk_CONF_VALUE_num(sect); i++) {
++        CONF_VALUE *option_value;
++        option_value = sk_CONF_VALUE_value(sect, i);
++        g_message("setting TLS option '%s' to '%s' from %s configuration file",
++                   option_value->name, option_value->value,
++                   SPICE_OPENSSL_CNF_FILENAME);
++        openssl_status = SSL_CONF_cmd(cctx, option_value->name, option_value->value);
++        switch(openssl_status) {
++        case 1: /* fallthrough */
++        case 2:
++            /* The option was successfully processed */
++            break;
++        case 0:
++            g_warning("failure to set option '%s'", option_value->name);
++            return_value = -1;
++            break;
++        case -2:
++            g_warning("unknown option '%s'", option_value->name);
++            return_value = -1;
++            break;
++        case -3:
++            g_warning("missing value for option '%s'", option_value->name);
++            return_value = -1;
++            break;
++        default:
++            g_warning("unknown SSL_CONF_cmd return value: %d", openssl_status);
++            return_value = -1;
++            break;
++        }
++    }
++
++    openssl_status = SSL_CONF_CTX_finish(cctx);
++    if (!openssl_status) {
++        g_warning("SSL_CONF_CTX_finish() failed");
++        return_value = -1;
++    }
++
++    SSL_CONF_CTX_free(cctx);
++
++    return return_value;
++}
++
++static int reds_ssl_config_file_try_load(RedsState *reds)
++{
++    int status = -1;
++    int openssl_status;
++    CONF *ssl_conf = NULL;
++    STACK_OF(CONF_VALUE) *default_section;
++    long error_line = -1;
++
++    if (!g_file_test(SPICE_OPENSSL_CNF_FILENAME, G_FILE_TEST_IS_REGULAR)) {
++        /* The configuration file is not mandatory, it's only meant to be used
++         * when the sysadmin does not want to use the system-wide OpenSSL defaults
++         */
++        return 0;
++    }
++
++    ssl_conf = NCONF_new(NULL);
++    openssl_status = NCONF_load(ssl_conf, SPICE_OPENSSL_CNF_FILENAME, &error_line);
++    if (openssl_status <= 0) {
++        if (error_line <= 0) {
++            g_warning("error loading config file %s", SPICE_OPENSSL_CNF_FILENAME);
++        } else {
++            g_warning("error parsing config file %s at %ld", SPICE_OPENSSL_CNF_FILENAME, error_line);
++        }
++        goto end;
++    }
++
++    default_section = NCONF_get_section(ssl_conf, "default");
++    if (default_section == NULL) {
++        g_warning("could not find any content in %s config file (no toplevel section?)", SPICE_OPENSSL_CNF_FILENAME);
++        goto end;
++    }
++
++    status = reds_ssl_config_file_apply(reds, default_section);
++
++end:
++    NCONF_free(ssl_conf);
++
++    return status;
++}
++
+ static int reds_init_ssl(RedsState *reds)
+ {
+     static GOnce openssl_once = G_ONCE_INIT;
+@@ -2911,6 +3008,11 @@ static int reds_init_ssl(RedsState *reds)
+     sk_zero(cmp_stack);
+ #endif
+ 
++    /* must be last to override whatever was configured previously */
++    if (reds_ssl_config_file_try_load(reds) != 0) {
++        return -1;
++    }
++
+     return 0;
+ }
+ 

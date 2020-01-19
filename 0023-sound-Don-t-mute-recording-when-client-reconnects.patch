@@ -1,7 +1,7 @@
-From fbc7799f94bb5d38421324a4270741e1ffe9d435 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Christophe Fergeau <cfergeau@redhat.com>
 Date: Fri, 25 May 2018 11:12:40 +0200
-Subject: [PATCH] sound: Don't mute recording when client reconnects
+Subject: [spice-server] sound: Don't mute recording when client reconnects
 
 When a new record channel is added, the code relies on a snd_send() call
 in record_channel_client_constructed() to send RECORD_START to the
@@ -223,6 +223,3 @@ index 9073626..8c6cf8a 100644
      object_class->finalize = record_channel_client_finalize;
  }
  
--- 
-2.17.1
-

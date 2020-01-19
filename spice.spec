@@ -1,6 +1,6 @@
 Name:           spice
 Version:        0.14.0
-Release:        2%{?dist}.5
+Release:        6%{?dist}
 Summary:        Implements the SPICE protocol
 Group:          User Interface/Desktops
 License:        LGPLv2+
@@ -29,7 +29,9 @@ Patch20:        0020-stream-channel-Activate-streaming-report-from-client.patch
 Patch21:        0021-reds-Disable-TLS-1.0.patch
 Patch22:        0022-cursor-Delay-release-of-QXL-guest-cursor-resources.patch
 Patch23:        0023-sound-Don-t-mute-recording-when-client-reconnects.patch
-Patch24:        0024-Fix-flexible-array-buffer-overflow.patch
+Patch24:        0024-tls-Parse-spice.cnf-OpenSSL-configuration-file.patch
+Patch25:        0025-ssl-Allow-to-use-ECDH-ciphers-with-OpenSSL-1.0.patch
+Patch26:        0026-Fix-flexible-array-buffer-overflow.patch
 
 # https://bugzilla.redhat.com/show_bug.cgi?id=613529
 %if 0%{?rhel}
@@ -119,27 +121,28 @@ mkdir -p %{buildroot}%{_libexecdir}
 
 
 %changelog
-* Thu Aug 09 2018 Frediano Ziglio <fziglio@redhat.com> - 0.14.0-2.5
+* Thu Aug 09 2018 Frediano Ziglio <fziglio@redhat.com> - 0.14.0-6
 - Fix flexible array buffer overflow
   Resolves: rhbz#1596008
 
-* Tue Jun 12 2018 Victor Toso <victortoso@redhat.com> - 0.14.0-2.4
+* Wed Jun 20 2018 Christophe Fergeau <cfergeau@redhat.com> - 0.14.0-5
 - Don't mute Record channel on client reconnection
-  Resolves: rhbz#1582601
+  Resolves: rhbz#1549132
+- Allow to configure TLS protocol versions and ciphers which SPICE will use for
+  TLS communications
+  Resolves: rhbz#1562213
+- Enable ECDH ciphers with OpenSSL 1.0
+  Resolves: rhbz#1566597
 
-* Fri Apr 27 2018 Christophe Fergeau <cfergeau@redhat.com> - 0.14.0-2.3
+* Fri Apr 27 2018 Christophe Fergeau <cfergeau@redhat.com> - 0.14.0-4
 - Revert back to spice 0.12 behaviour where QXL guest resources for cursor
   commands are only released when the current cursor is replaced. This avoids
   a QEMU regression causing crashes during migration
-  Resolves: rhbz#1572489
+  Resolves: rhbz#1567944
 
-* Mon Mar 19 2018 Christophe Fergeau <cfergeau@redhat.com> - 0.14.0-2.2
-- Rebuild for missing changelog entry
-  Related: rhbz#1551072
-
-* Thu Mar 15 2018 Christophe Fergeau <cfergeau@redhat.com> - 0.14.0-2.1
+* Tue Apr 03 2018 Christophe Fergeau <cfergeau@redhat.com> - 0.14.0-3
 - Disable TLSv1.0
-  Related: rhbz#1551072
+  Resolves: rhbz#1521053
 
 * Thu Oct 12 2017 Christophe Fergeau <cfergeau@redhat.com> - 0.14.0-2
 - Add streaming patches for use with spice-streaming-agent
