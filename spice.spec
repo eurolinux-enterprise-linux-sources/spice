@@ -1,6 +1,6 @@
 Name:           spice
 Version:        0.14.0
-Release:        2%{?dist}.4
+Release:        2%{?dist}.5
 Summary:        Implements the SPICE protocol
 Group:          User Interface/Desktops
 License:        LGPLv2+
@@ -29,6 +29,7 @@ Patch20:        0020-stream-channel-Activate-streaming-report-from-client.patch
 Patch21:        0021-reds-Disable-TLS-1.0.patch
 Patch22:        0022-cursor-Delay-release-of-QXL-guest-cursor-resources.patch
 Patch23:        0023-sound-Don-t-mute-recording-when-client-reconnects.patch
+Patch24:        0024-Fix-flexible-array-buffer-overflow.patch
 
 # https://bugzilla.redhat.com/show_bug.cgi?id=613529
 %if 0%{?rhel}
@@ -44,7 +45,7 @@ BuildRequires:  celt051-devel
 BuildRequires:  pixman-devel alsa-lib-devel openssl-devel libjpeg-turbo-devel
 BuildRequires:  libcacard-devel cyrus-sasl-devel
 BuildRequires:  lz4-devel
-BuildRequires:  pyparsing
+BuildRequires:  pyparsing python-six
 BuildRequires:  opus-devel
 BuildRequires:  git
 BuildRequires:  autoconf automake libtool
@@ -118,6 +119,10 @@ mkdir -p %{buildroot}%{_libexecdir}
 
 
 %changelog
+* Thu Aug 09 2018 Frediano Ziglio <fziglio@redhat.com> - 0.14.0-2.5
+- Fix flexible array buffer overflow
+  Resolves: rhbz#1596008
+
 * Tue Jun 12 2018 Victor Toso <victortoso@redhat.com> - 0.14.0-2.4
 - Don't mute Record channel on client reconnection
   Resolves: rhbz#1582601

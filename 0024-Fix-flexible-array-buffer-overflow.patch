@@ -1,0 +1,301 @@
+From c182f8e4a445e93842faf6c2bd8583894da36a1a Mon Sep 17 00:00:00 2001
+From: Frediano Ziglio <fziglio@redhat.com>
+Date: Fri, 18 May 2018 11:41:57 +0100
+Subject: [PATCH] Fix flexible array buffer overflow
+
+This is kind of a DoS, possibly flexible array in the protocol
+causes the network size check to be ignored due to integer overflows.
+
+The size of flexible array is computed as (message_end - position),
+then this size is added to the number of bytes before the array and
+this number is used to check if we overflow initial message.
+
+An example is:
+
+    message {
+        uint32 dummy[2];
+        uint8 data[] @end;
+    } LenMessage;
+
+which generated this (simplified remove useless code) code:
+
+    { /* data */
+        data__nelements = message_end - (start + 8);
+
+        data__nw_size = data__nelements;
+    }
+
+    nw_size = 8 + data__nw_size;
+
+    /* Check if message fits in reported side */
+    if (nw_size > (uintptr_t) (message_end - start)) {
+        return NULL;
+    }
+
+Following code:
+- data__nelements == message_end - (start + 8)
+- data__nw_size == data__nelements == message_end - (start + 8)
+- nw_size == 8 + data__nw_size == 8 + message_end - (start + 8) ==
+  8 + message_end - start - 8 == message_end -start
+- the check for overflow is (nw_size > (message_end - start)) but
+  nw_size == message_end - start so the check is doing
+  ((message_end - start) > (message_end - start)) which is always false.
+
+If message_end - start < 8 then data__nelements (number of element
+on the array above) computation generate an integer underflow that
+later create a buffer overflow.
+
+Add a check to make sure that the array starts before the message ends
+to avoid the overflow.
+
+Difference is:
+    diff -u save/generated_client_demarshallers1.c common/generated_client_demarshallers1.c
+    --- save/generated_client_demarshallers1.c	2018-06-22 22:13:48.626793919 +0100
+    +++ common/generated_client_demarshallers1.c	2018-06-22 22:14:03.408163291 +0100
+    @@ -225,6 +225,9 @@
+         uint64_t data__nelements;
+
+         { /* data */
+    +        if (SPICE_UNLIKELY((start + 0) > message_end)) {
+    +            goto error;
+    +        }
+             data__nelements = message_end - (start + 0);
+
+             data__nw_size = data__nelements;
+    @@ -243,6 +246,9 @@
+         *free_message = nofree;
+         return data;
+
+    +   error:
+    +    free(data);
+    +    return NULL;
+     }
+
+     static uint8_t * parse_msg_set_ack(uint8_t *message_start, uint8_t *message_end, SPICE_GNUC_UNUSED int minor, size_t *size, message_destructor_t *free_message)
+    @@ -301,6 +307,9 @@
+         SpiceMsgPing *out;
+
+         { /* data */
+    +        if (SPICE_UNLIKELY((start + 12) > message_end)) {
+    +            goto error;
+    +        }
+             data__nelements = message_end - (start + 12);
+
+             data__nw_size = data__nelements;
+    @@ -5226,6 +5235,9 @@
+             uint64_t cursor_data__nw_size;
+             uint64_t cursor_data__nelements;
+             { /* data */
+    +            if (SPICE_UNLIKELY((start2 + 22) > message_end)) {
+    +                goto error;
+    +            }
+                 cursor_data__nelements = message_end - (start2 + 22);
+
+                 cursor_data__nw_size = cursor_data__nelements;
+    @@ -5305,6 +5317,9 @@
+             uint64_t cursor_data__nw_size;
+             uint64_t cursor_data__nelements;
+             { /* data */
+    +            if (SPICE_UNLIKELY((start2 + 22) > message_end)) {
+    +                goto error;
+    +            }
+                 cursor_data__nelements = message_end - (start2 + 22);
+
+                 cursor_data__nw_size = cursor_data__nelements;
+    @@ -5540,6 +5555,9 @@
+         SpiceMsgPlaybackPacket *out;
+
+         { /* data */
+    +        if (SPICE_UNLIKELY((start + 4) > message_end)) {
+    +            goto error;
+    +        }
+             data__nelements = message_end - (start + 4);
+
+             data__nw_size = data__nelements;
+    @@ -5594,6 +5612,9 @@
+         SpiceMsgPlaybackMode *out;
+
+         { /* data */
+    +        if (SPICE_UNLIKELY((start + 8) > message_end)) {
+    +            goto error;
+    +        }
+             data__nelements = message_end - (start + 8);
+
+             data__nw_size = data__nelements;
+    diff -u save/generated_client_demarshallers.c common/generated_client_demarshallers.c
+    --- save/generated_client_demarshallers.c	2018-06-22 22:13:48.626793919 +0100
+    +++ common/generated_client_demarshallers.c	2018-06-22 22:14:03.004153195 +0100
+    @@ -225,6 +225,9 @@
+         uint64_t data__nelements;
+
+         { /* data */
+    +        if (SPICE_UNLIKELY((start + 0) > message_end)) {
+    +            goto error;
+    +        }
+             data__nelements = message_end - (start + 0);
+
+             data__nw_size = data__nelements;
+    @@ -243,6 +246,9 @@
+         *free_message = nofree;
+         return data;
+
+    +   error:
+    +    free(data);
+    +    return NULL;
+     }
+
+     static uint8_t * parse_msg_set_ack(uint8_t *message_start, uint8_t *message_end, SPICE_GNUC_UNUSED int minor, size_t *size, message_destructor_t *free_message)
+    @@ -301,6 +307,9 @@
+         SpiceMsgPing *out;
+
+         { /* data */
+    +        if (SPICE_UNLIKELY((start + 12) > message_end)) {
+    +            goto error;
+    +        }
+             data__nelements = message_end - (start + 12);
+
+             data__nw_size = data__nelements;
+    @@ -6574,6 +6583,9 @@
+             }
+
+             { /* data */
+    +            if (SPICE_UNLIKELY((start2 + 2 + cursor_u__nw_size) > message_end)) {
+    +                goto error;
+    +            }
+                 cursor_data__nelements = message_end - (start2 + 2 + cursor_u__nw_size);
+
+                 cursor_data__nw_size = cursor_data__nelements;
+    @@ -6670,6 +6682,9 @@
+             }
+
+             { /* data */
+    +            if (SPICE_UNLIKELY((start2 + 2 + cursor_u__nw_size) > message_end)) {
+    +                goto error;
+    +            }
+                 cursor_data__nelements = message_end - (start2 + 2 + cursor_u__nw_size);
+
+                 cursor_data__nw_size = cursor_data__nelements;
+    @@ -6907,6 +6922,9 @@
+         SpiceMsgPlaybackPacket *out;
+
+         { /* data */
+    +        if (SPICE_UNLIKELY((start + 4) > message_end)) {
+    +            goto error;
+    +        }
+             data__nelements = message_end - (start + 4);
+
+             data__nw_size = data__nelements;
+    @@ -6961,6 +6979,9 @@
+         SpiceMsgPlaybackMode *out;
+
+         { /* data */
+    +        if (SPICE_UNLIKELY((start + 6) > message_end)) {
+    +            goto error;
+    +        }
+             data__nelements = message_end - (start + 6);
+
+             data__nw_size = data__nelements;
+    @@ -7559,6 +7580,9 @@
+         SpiceMsgTunnelSocketData *out;
+
+         { /* data */
+    +        if (SPICE_UNLIKELY((start + 2) > message_end)) {
+    +            goto error;
+    +        }
+             data__nelements = message_end - (start + 2);
+
+             data__nw_size = data__nelements;
+    @@ -7840,6 +7864,9 @@
+         }
+
+         { /* compressed_data */
+    +        if (SPICE_UNLIKELY((start + 1 + u__nw_size) > message_end)) {
+    +            goto error;
+    +        }
+             compressed_data__nelements = message_end - (start + 1 + u__nw_size);
+
+             compressed_data__nw_size = compressed_data__nelements;
+    diff -u save/generated_server_demarshallers.c common/generated_server_demarshallers.c
+    --- save/generated_server_demarshallers.c	2018-06-22 22:13:48.627793944 +0100
+    +++ common/generated_server_demarshallers.c	2018-06-22 22:14:05.231208847 +0100
+    @@ -306,6 +306,9 @@
+         uint64_t data__nelements;
+
+         { /* data */
+    +        if (SPICE_UNLIKELY((start + 0) > message_end)) {
+    +            goto error;
+    +        }
+             data__nelements = message_end - (start + 0);
+
+             data__nw_size = data__nelements;
+    @@ -324,6 +327,9 @@
+         *free_message = nofree;
+         return data;
+
+    +   error:
+    +    free(data);
+    +    return NULL;
+     }
+
+     static uint8_t * parse_msgc_disconnecting(uint8_t *message_start, uint8_t *message_end, SPICE_GNUC_UNUSED int minor, size_t *size, message_destructor_t *free_message)
+    @@ -1259,6 +1265,9 @@
+         SpiceMsgcRecordPacket *out;
+
+         { /* data */
+    +        if (SPICE_UNLIKELY((start + 4) > message_end)) {
+    +            goto error;
+    +        }
+             data__nelements = message_end - (start + 4);
+
+             data__nw_size = data__nelements;
+    @@ -1313,6 +1322,9 @@
+         SpiceMsgcRecordMode *out;
+
+         { /* data */
+    +        if (SPICE_UNLIKELY((start + 6) > message_end)) {
+    +            goto error;
+    +        }
+             data__nelements = message_end - (start + 6);
+
+             data__nw_size = data__nelements;
+    @@ -1841,6 +1853,9 @@
+         SpiceMsgcTunnelSocketData *out;
+
+         { /* data */
+    +        if (SPICE_UNLIKELY((start + 2) > message_end)) {
+    +            goto error;
+    +        }
+             data__nelements = message_end - (start + 2);
+
+             data__nw_size = data__nelements;
+    @@ -2057,6 +2072,9 @@
+         }
+
+         { /* compressed_data */
+    +        if (SPICE_UNLIKELY((start + 1 + u__nw_size) > message_end)) {
+    +            goto error;
+    +        }
+             compressed_data__nelements = message_end - (start + 1 + u__nw_size);
+
+             compressed_data__nw_size = compressed_data__nelements;
+
+Signed-off-by: Frediano Ziglio <fziglio@redhat.com>
+---
+ spice-common/python_modules/demarshal.py | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/spice-common/python_modules/demarshal.py b/spice-common/python_modules/demarshal.py
+index 1ea131d..7172762 100644
+--- a/spice-common/python_modules/demarshal.py
++++ b/spice-common/python_modules/demarshal.py
+@@ -318,6 +318,7 @@ def write_validate_array_item(writer, container, item, scope, parent_scope, star
+         writer.assign(nelements, array.size)
+     elif array.is_remaining_length():
+         if element_type.is_fixed_nw_size():
++            writer.error_check("%s > message_end" % item.get_position())
+             if element_type.get_fixed_nw_size() == 1:
+                 writer.assign(nelements, "message_end - %s" % item.get_position())
+             else:
+-- 
+2.17.1
+
