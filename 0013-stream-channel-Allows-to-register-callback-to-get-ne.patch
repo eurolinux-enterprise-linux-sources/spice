@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Frediano Ziglio <fziglio@redhat.com>
+Date: Sat, 21 Jan 2017 19:08:12 +0000
+Subject: [spice-server] stream-channel: Allows to register callback to get new
+ stream request
+
+The channel needs to communicate when it receive a new
+stream request from the guest.
+
+Signed-off-by: Frediano Ziglio <fziglio@redhat.com>
+Acked-by: Jonathon Jongsma <jjongsma@redhat.com>
+---
+ server/stream-channel.c | 12 ++++++++++++
+ server/stream-channel.h |  6 ++++++
+ 2 files changed, 18 insertions(+)
+
+diff --git a/server/stream-channel.c b/server/stream-channel.c
+index 59f566f50..be6f7c7d1 100644
+--- a/server/stream-channel.c
++++ b/server/stream-channel.c
+@@ -70,6 +70,10 @@ struct StreamChannel {
+     int stream_id;
+     /* size of the current video stream */
+     unsigned width, height;
++
++    /* callback to notify when a stream should be started or stopped */
++    stream_channel_start_proc start_cb;
++    void *start_opaque;
+ };
+ 
+ struct StreamChannelClass {
+@@ -382,3 +386,11 @@ stream_channel_send_data(StreamChannel *channel, const void *data, size_t size,
+     memcpy(item->data.data, data, size);
+     red_channel_pipes_add(red_channel, &item->base);
+ }
++
++void
++stream_channel_register_start_cb(StreamChannel *channel,
++                                 stream_channel_start_proc cb, void *opaque)
++{
++    channel->start_cb = cb;
++    channel->start_opaque = opaque;
++}
+diff --git a/server/stream-channel.h b/server/stream-channel.h
+index 156a75d31..ba098df49 100644
+--- a/server/stream-channel.h
++++ b/server/stream-channel.h
+@@ -49,6 +49,7 @@ GType stream_channel_get_type(void) G_GNUC_CONST;
+ StreamChannel* stream_channel_new(RedsState *server, uint32_t id);
+ 
+ struct StreamMsgFormat;
++struct StreamMsgStartStop;
+ 
+ void stream_channel_change_format(StreamChannel *channel,
+                                   const struct StreamMsgFormat *fmt);
+@@ -56,6 +57,11 @@ void stream_channel_send_data(StreamChannel *channel,
+                               const void *data, size_t size,
+                               uint32_t mm_time);
+ 
++typedef void (*stream_channel_start_proc)(void *opaque, struct StreamMsgStartStop *start,
++                                          StreamChannel *channel);
++void stream_channel_register_start_cb(StreamChannel *channel,
++                                      stream_channel_start_proc cb, void *opaque);
++
+ G_END_DECLS
+ 
+ #endif /* STREAM_CHANNEL_H_ */

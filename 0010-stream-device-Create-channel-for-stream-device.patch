@@ -1,0 +1,151 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Frediano Ziglio <fziglio@redhat.com>
+Date: Sat, 21 Jan 2017 14:02:29 +0000
+Subject: [spice-server] stream-device: Create channel for stream device
+
+So can be used by the device to communicate with the clients.
+
+Signed-off-by: Frediano Ziglio <fziglio@redhat.com>
+Acked-by: Jonathon Jongsma <jjongsma@redhat.com>
+---
+ server/stream-channel.c | 52 +++++++++++++++++++++++++++++++++++++++++++++++--
+ server/stream-device.c  | 14 +++++++++++++
+ 2 files changed, 64 insertions(+), 2 deletions(-)
+
+diff --git a/server/stream-channel.c b/server/stream-channel.c
+index df6936513..baf3d58a6 100644
+--- a/server/stream-channel.c
++++ b/server/stream-channel.c
+@@ -19,6 +19,8 @@
+ #include <config.h>
+ #endif
+ 
++#include <common/generated_server_marshallers.h>
++
+ #include "red-channel-client.h"
+ #include "stream-channel.h"
+ #include "reds.h"
+@@ -64,6 +66,13 @@ struct StreamChannelClass {
+ 
+ G_DEFINE_TYPE(StreamChannel, stream_channel, RED_TYPE_CHANNEL)
+ 
++enum {
++    RED_PIPE_ITEM_TYPE_SURFACE_CREATE = RED_PIPE_ITEM_TYPE_COMMON_LAST,
++    RED_PIPE_ITEM_TYPE_FILL_SURFACE,
++};
++
++#define PRIMARY_SURFACE_ID 0
++
+ static void stream_channel_client_on_disconnect(RedChannelClient *rcc);
+ 
+ static void
+@@ -103,9 +112,46 @@ stream_channel_client_new(StreamChannel *channel, RedClient *client, RedsStream
+ }
+ 
+ static void
++fill_base(SpiceMarshaller *m)
++{
++    SpiceMsgDisplayBase base;
++
++    base.surface_id = PRIMARY_SURFACE_ID;
++    base.box = (SpiceRect) { 0, 0, 1024, 768 };
++    base.clip = (SpiceClip) { SPICE_CLIP_TYPE_NONE, NULL };
++
++    spice_marshall_DisplayBase(m, &base);
++}
++
++static void
+ stream_channel_send_item(RedChannelClient *rcc, RedPipeItem *pipe_item)
+ {
++    SpiceMarshaller *m = red_channel_client_get_marshaller(rcc);
++
+     switch (pipe_item->type) {
++    case RED_PIPE_ITEM_TYPE_SURFACE_CREATE: {
++        red_channel_client_init_send_data(rcc, SPICE_MSG_DISPLAY_SURFACE_CREATE);
++        SpiceMsgSurfaceCreate surface_create = {
++            PRIMARY_SURFACE_ID,
++            1024, 768,
++            SPICE_SURFACE_FMT_32_xRGB, SPICE_SURFACE_FLAGS_PRIMARY
++        };
++        spice_marshall_msg_display_surface_create(m, &surface_create);
++        break;
++    }
++    case RED_PIPE_ITEM_TYPE_FILL_SURFACE: {
++        red_channel_client_init_send_data(rcc, SPICE_MSG_DISPLAY_DRAW_FILL);
++
++        fill_base(m);
++
++        SpiceFill fill;
++        fill.brush = (SpiceBrush) { SPICE_BRUSH_TYPE_SOLID, { .color = 0 } };
++        fill.rop_descriptor = SPICE_ROPD_OP_PUT;
++        fill.mask = (SpiceQMask) { 0, { 0, 0 }, NULL };
++        SpiceMarshaller *brush_pat_out, *mask_bitmap_out;
++        spice_marshall_Fill(m, &fill, &brush_pat_out, &mask_bitmap_out);
++        break;
++    }
+     default:
+         spice_error("invalid pipe item type");
+     }
+@@ -169,8 +215,10 @@ stream_channel_connect(RedChannel *red_channel, RedClient *red_client, RedsStrea
+     // "emulate" dcc_start
+     // TODO only if "surface"
+     red_channel_client_pipe_add_empty_msg(rcc, SPICE_MSG_DISPLAY_INVAL_ALL_PALETTES);
+-    // TODO red_surface_create_item_new
+-    // TODO surface data ??
++    // TODO pass proper data
++    red_channel_client_pipe_add_type(rcc, RED_PIPE_ITEM_TYPE_SURFACE_CREATE);
++    // surface data
++    red_channel_client_pipe_add_type(rcc, RED_PIPE_ITEM_TYPE_FILL_SURFACE);
+     // TODO monitor configs ??
+     red_channel_client_pipe_add_empty_msg(rcc, SPICE_MSG_DISPLAY_MARK);
+ }
+diff --git a/server/stream-device.c b/server/stream-device.c
+index 58edb3d11..0c9173ae0 100644
+--- a/server/stream-device.c
++++ b/server/stream-device.c
+@@ -22,6 +22,8 @@
+ #include <spice/stream-device.h>
+ 
+ #include "char-device.h"
++#include "stream-channel.h"
++#include "reds.h"
+ 
+ #define TYPE_STREAM_DEVICE stream_device_get_type()
+ 
+@@ -37,9 +39,11 @@ typedef struct StreamDeviceClass StreamDeviceClass;
+ 
+ struct StreamDevice {
+     RedCharDevice parent;
++
+     StreamDevHeader hdr;
+     uint8_t hdr_pos;
+     bool has_error;
++    StreamChannel *stream_channel;
+ };
+ 
+ struct StreamDeviceClass {
+@@ -204,7 +208,10 @@ stream_device_connect(RedsState *reds, SpiceCharDeviceInstance *sin)
+ {
+     SpiceCharDeviceInterface *sif;
+ 
++    StreamChannel *stream_channel = stream_channel_new(reds, 1); // TODO id
++
+     StreamDevice *dev = stream_device_new(sin, reds);
++    dev->stream_channel = stream_channel;
+ 
+     sif = spice_char_device_get_interface(sin);
+     if (sif->state) {
+@@ -217,6 +224,13 @@ stream_device_connect(RedsState *reds, SpiceCharDeviceInstance *sin)
+ static void
+ stream_device_dispose(GObject *object)
+ {
++    StreamDevice *dev = STREAM_DEVICE(object);
++
++    if (dev->stream_channel) {
++        // close all current connections and drop the reference
++        red_channel_destroy(RED_CHANNEL(dev->stream_channel));
++        dev->stream_channel = NULL;
++    }
+ }
+ 
+ static void

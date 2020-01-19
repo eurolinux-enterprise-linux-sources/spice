@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Frediano Ziglio <fziglio@redhat.com>
+Date: Tue, 19 Sep 2017 08:28:02 +0100
+Subject: [spice-server] reds: Remove leak allocating migration state
+
+Signed-off-by: Frediano Ziglio <fziglio@redhat.com>
+Acked-by: Christophe Fergeau <cfergeau@redhat.com>
+---
+ server/reds.c | 2 +-
+ server/reds.h | 4 ----
+ 2 files changed, 1 insertion(+), 5 deletions(-)
+
+diff --git a/server/reds.c b/server/reds.c
+index 12c33570a..1b1ab94ea 100644
+--- a/server/reds.c
++++ b/server/reds.c
+@@ -3378,7 +3378,7 @@ SPICE_GNUC_VISIBLE int spice_server_add_interface(SpiceServer *reds,
+             return -1;
+         }
+         reds->migration_interface = SPICE_CONTAINEROF(sin, SpiceMigrateInstance, base);
+-        reds->migration_interface->st = spice_new0(SpiceMigrateState, 1);
++        reds->migration_interface->st = (SpiceMigrateState *)(intptr_t)1; // dummy pointer
+     }
+ 
+     return 0;
+diff --git a/server/reds.h b/server/reds.h
+index 4f5fc28c3..cea002c51 100644
+--- a/server/reds.h
++++ b/server/reds.h
+@@ -35,10 +35,6 @@ static inline QXLInterface * qxl_get_interface(QXLInstance *qxl)
+     return SPICE_CONTAINEROF(qxl->base.sif, QXLInterface, base);
+ }
+ 
+-struct SpiceMigrateState {
+-    int dummy;
+-};
+-
+ /* main thread only */
+ void reds_handle_channel_event(RedsState *reds, int event, SpiceChannelEventInfo *info);
+ 

@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christophe Fergeau <cfergeau@redhat.com>
+Date: Tue, 10 Apr 2018 17:32:48 +0200
+Subject: [spice-server] cursor: Delay release of QXL guest cursor resources
+
+There's an implicit API/ABI contract between QEMU and SPICE that SPICE
+will keep the guest QXL resources alive as long as QEMU can hold a
+pointer to them. This implicit contract was broken in 1c6e7cf7 "Release
+cursor as soon as possible", causing crashes at migration time.
+While the proper fix would be in QEMU so that spice-server does not need
+to have that kind of knowledge regarding QEMU internal implementation,
+this commit reverts to the pre-1c6e7cf7 behaviour to avoid a regression
+while QEMU is being fixed.
+
+This version of the fix is based on a suggestion from Frediano Ziglio.
+
+https://bugzilla.redhat.com/show_bug.cgi?id=1540919
+
+Signed-off-by: Christophe Fergeau <cfergeau@redhat.com>
+Acked-by: Frediano Ziglio <fziglio@redhat.com>
+---
+ server/red-parse-qxl.c | 4 ++++
+ server/red-parse-qxl.h | 1 +
+ server/red-worker.c    | 2 +-
+ 3 files changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/server/red-parse-qxl.c b/server/red-parse-qxl.c
+index 33f3692..c436214 100644
+--- a/server/red-parse-qxl.c
++++ b/server/red-parse-qxl.c
+@@ -24,6 +24,7 @@
+ #include <common/lz_common.h>
+ #include "spice-bitmap-utils.h"
+ #include "red-common.h"
++#include "red-qxl.h"
+ #include "memslot.h"
+ #include "red-parse-qxl.h"
+ 
+@@ -1497,4 +1498,7 @@ void red_put_cursor_cmd(RedCursorCmd *red)
+         red_put_cursor(&red->u.set.shape);
+         break;
+     }
++    if (red->qxl) {
++        red_qxl_release_resource(red->qxl, red->release_info_ext);
++    }
+ }
+diff --git a/server/red-parse-qxl.h b/server/red-parse-qxl.h
+index 4a576ca..f0407b5 100644
+--- a/server/red-parse-qxl.h
++++ b/server/red-parse-qxl.h
+@@ -99,6 +99,7 @@ typedef struct RedSurfaceCmd {
+ } RedSurfaceCmd;
+ 
+ typedef struct RedCursorCmd {
++    QXLInstance *qxl;
+     QXLReleaseInfoExt release_info_ext;
+     uint8_t type;
+     union {
+diff --git a/server/red-worker.c b/server/red-worker.c
+index 8a63fde..ccf5df9 100644
+--- a/server/red-worker.c
++++ b/server/red-worker.c
+@@ -112,7 +112,7 @@ static gboolean red_process_cursor_cmd(RedWorker *worker, const QXLCommandExt *e
+         free(cursor_cmd);
+         return FALSE;
+     }
+-    red_qxl_release_resource(worker->qxl, cursor_cmd->release_info_ext);
++    cursor_cmd->qxl = worker->qxl;
+     cursor_channel_process_cmd(worker->cursor_channel, cursor_cmd);
+     return TRUE;
+ }

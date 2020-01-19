@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Frediano Ziglio <fziglio@redhat.com>
+Date: Tue, 24 Jan 2017 11:36:27 +0000
+Subject: [spice-server] char-device: Do not stop and clear interface on reset
+
+Currently, red_char_device_reset() stops the device, clears all pending
+messages, and clears its device instance. After this function is called,
+the char device will not work again until it is assigned a new device
+instance and restarted. This is fine for the vdagent char device, which
+is currently the only user of this function. But for the stream device,
+we want to be able to reset the char device to a working state (e.g.
+clear all pending messages, etc) without stopping or disabling the char
+device. So this function will now only reset the char device to a clean
+working state, and the _stop() and _reset_dev_instance() calls will be
+moved up to the caller.
+
+Signed-off-by: Frediano Ziglio <fziglio@redhat.com>
+Acked-by: Jonathon Jongsma <jjongsma@redhat.com>
+---
+ server/char-device.c | 2 --
+ server/reds.c        | 6 +++++-
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/server/char-device.c b/server/char-device.c
+index 658f9f364..f8a098bd8 100644
+--- a/server/char-device.c
++++ b/server/char-device.c
+@@ -823,7 +823,6 @@ void red_char_device_reset(RedCharDevice *dev)
+     GList *client_item;
+     RedCharDeviceWriteBuffer *buf;
+ 
+-    red_char_device_stop(dev);
+     dev->priv->wait_for_migrate_data = FALSE;
+     spice_debug("char device %p", dev);
+     while ((buf = g_queue_pop_tail(&dev->priv->write_queue))) {
+@@ -845,7 +844,6 @@ void red_char_device_reset(RedCharDevice *dev)
+         dev_client->num_client_tokens += dev_client->num_client_tokens_free;
+         dev_client->num_client_tokens_free = 0;
+     }
+-    red_char_device_reset_dev_instance(dev, NULL);
+ }
+ 
+ void red_char_device_wakeup(RedCharDevice *dev)
+diff --git a/server/reds.c b/server/reds.c
+index b24f61ab2..401d242fb 100644
+--- a/server/reds.c
++++ b/server/reds.c
+@@ -470,6 +470,7 @@ static void reds_reset_vdp(RedsState *reds)
+ {
+     RedCharDeviceVDIPort *dev = reds->agent_dev;
+     SpiceCharDeviceInterface *sif;
++    RedCharDevice *char_dev;
+ 
+     dev->priv->read_state = VDI_PORT_READ_STATE_READ_HEADER;
+     dev->priv->receive_pos = (uint8_t *)&dev->priv->vdi_chunk_header;
+@@ -502,7 +503,10 @@ static void reds_reset_vdp(RedsState *reds)
+      *  The tokens are also reset to avoid mismatch in upon agent reconnection.
+      */
+     dev->priv->agent_attached = FALSE;
+-    red_char_device_reset(RED_CHAR_DEVICE(dev));
++    char_dev = RED_CHAR_DEVICE(dev);
++    red_char_device_stop(char_dev);
++    red_char_device_reset(char_dev);
++    red_char_device_reset_dev_instance(char_dev, NULL);
+ 
+     sif = spice_char_device_get_interface(reds->vdagent);
+     if (sif->state) {

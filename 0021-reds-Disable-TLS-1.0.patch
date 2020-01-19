@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Frediano Ziglio <fziglio@redhat.com>
+Date: Sun, 11 Feb 2018 18:27:41 +0000
+Subject: [spice-server] reds: Disable TLS 1.0
+
+TLS 1.0 is considered now insecure.
+TLS 1.1 was introduced in 2006.
+Our SPICE clients uses OpenSSL to use TLS and the support for TLS 1.1
+in OpenSSL was introduced in 2006 too so even in systems like
+Windows XP which are not officially supporting TLS 1.0 will work
+with SPICE and TLS 1.1.
+This fixes https://bugzilla.redhat.com/show_bug.cgi?id=1521053.
+
+Signed-off-by: Frediano Ziglio <fziglio@redhat.com>
+Acked-by: Victor Toso <victortoso@redhat.com>
+---
+ server/reds.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/server/reds.c b/server/reds.c
+index 401d242..0af5643 100644
+--- a/server/reds.c
++++ b/server/reds.c
+@@ -2836,9 +2836,10 @@ static int reds_init_ssl(RedsState *reds)
+     SSL_METHOD *ssl_method;
+ #endif
+     int return_code;
+-    /* When some other SSL/TLS version becomes obsolete, add it to this
++    /* Limit connection to TLSv1.1 or newer.
++     * When some other SSL/TLS version becomes obsolete, add it to this
+      * variable. */
+-    long ssl_options = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3;
++    long ssl_options = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1;
+ 
+     /* Global system initialization*/
+     g_once(&openssl_once, openssl_global_init, NULL);

@@ -1,0 +1,228 @@
+From fbc7799f94bb5d38421324a4270741e1ffe9d435 Mon Sep 17 00:00:00 2001
+From: Christophe Fergeau <cfergeau@redhat.com>
+Date: Fri, 25 May 2018 11:12:40 +0200
+Subject: [PATCH] sound: Don't mute recording when client reconnects
+
+When a new record channel is added, the code relies on a snd_send() call
+in record_channel_client_constructed() to send RECORD_START to the
+client. However, at this point, snd_send() is non-functional because
+the red_channel_client_pipe_add() call it makes is a no-op because
+prepare_pipe_add() makes a connection check through
+red_channel_client_is_connected() queueing the item. This connection
+check returns FALSE at ::constructed() time as the channel client will
+only become connected towards the end of
+red_channel_client_initable_init() which runs after the object
+instantiation is complete.
+
+This commit solves this issue by making PlaybackChannelClient and
+RecordChannelClient implement GInitable, and move the code interacting
+with the client in their _initable_init() function, as at this point the
+objects will be able to send data.
+
+This causes a bug where starting recording and then
+disconnecting/reconnecting the client does not successfully reenable
+recording. This is a regression introduced by commit d8dc09
+'sound: Convert SndChannelClient to RedChannelClient'
+
+https://bugzilla.redhat.com/show_bug.cgi?id=1549132
+
+Signed-off-by: Christophe Fergeau <cfergeau@redhat.com>
+Acked-by: Victor Toso <victortoso@redhat.com>
+---
+ server/sound.c | 120 ++++++++++++++++++++++++++++++++++---------------
+ 1 file changed, 83 insertions(+), 37 deletions(-)
+
+diff --git a/server/sound.c b/server/sound.c
+index 9073626..8c6cf8a 100644
+--- a/server/sound.c
++++ b/server/sound.c
+@@ -103,6 +103,11 @@ typedef struct SndChannelClientClass {
+     RedChannelClientClass parent_class;
+ } SndChannelClientClass;
+ 
++static void playback_channel_client_initable_interface_init(GInitableIface *iface);
++static void record_channel_client_initable_interface_init(GInitableIface *iface);
++static GInitableIface *playback_channel_client_parent_initable_iface;
++static GInitableIface *record_channel_client_parent_initable_iface;
++
+ G_DEFINE_TYPE(SndChannelClient, snd_channel_client, RED_TYPE_CHANNEL_CLIENT)
+ 
+ 
+@@ -149,7 +154,9 @@ typedef struct PlaybackChannelClientClass {
+     SndChannelClientClass parent_class;
+ } PlaybackChannelClientClass;
+ 
+-G_DEFINE_TYPE(PlaybackChannelClient, playback_channel_client, TYPE_SND_CHANNEL_CLIENT)
++G_DEFINE_TYPE_WITH_CODE(PlaybackChannelClient, playback_channel_client, TYPE_SND_CHANNEL_CLIENT,
++                        G_IMPLEMENT_INTERFACE(G_TYPE_INITABLE, playback_channel_client_initable_interface_init))
++ 
+ 
+ 
+ typedef struct SpiceVolumeState {
+@@ -207,6 +214,7 @@ typedef struct RecordChannelClass {
+ } RecordChannelClass;
+ 
+ G_DEFINE_TYPE(RecordChannel, record_channel, TYPE_SND_CHANNEL)
++ 
+ 
+ 
+ #define TYPE_RECORD_CHANNEL_CLIENT record_channel_client_get_type()
+@@ -230,7 +238,8 @@ typedef struct RecordChannelClientClass {
+     SndChannelClientClass parent_class;
+ } RecordChannelClientClass;
+ 
+-G_DEFINE_TYPE(RecordChannelClient, record_channel_client, TYPE_SND_CHANNEL_CLIENT)
++G_DEFINE_TYPE_WITH_CODE(RecordChannelClient, record_channel_client, TYPE_SND_CHANNEL_CLIENT,
++                        G_IMPLEMENT_INTERFACE(G_TYPE_INITABLE, record_channel_client_initable_interface_init))
+ 
+ 
+ /* A list of all Spice{Playback,Record}State objects */
+@@ -1044,7 +1053,6 @@ playback_channel_client_constructed(GObject *object)
+     RedChannelClient *rcc = RED_CHANNEL_CLIENT(playback_client);
+     RedChannel *red_channel = red_channel_client_get_channel(rcc);
+     SndChannel *channel = SND_CHANNEL(red_channel);
+-    RedClient *red_client = red_channel_client_get_client(rcc);
+     SndChannelClient *scc = SND_CHANNEL_CLIENT(playback_client);
+ 
+     G_OBJECT_CLASS(playback_channel_client_parent_class)->constructed(object);
+@@ -1070,18 +1078,6 @@ playback_channel_client_constructed(GObject *object)
+ 
+     spice_debug("playback client %p using mode %s", playback_client,
+                 spice_audio_data_mode_to_string(playback_client->mode));
+-
+-    if (!red_client_during_migrate_at_target(red_client)) {
+-        snd_set_command(scc, SND_PLAYBACK_MODE_MASK);
+-        if (channel->volume.volume_nchannels) {
+-            snd_set_command(scc, SND_VOLUME_MUTE_MASK);
+-        }
+-    }
+-
+-    if (channel->active) {
+-        playback_channel_client_start(scc);
+-    }
+-    snd_send(scc);
+ }
+ 
+ static void snd_set_peer(RedChannel *red_channel, RedClient *client, RedsStream *stream,
+@@ -1250,27 +1246,6 @@ record_channel_client_finalize(GObject *object)
+     G_OBJECT_CLASS(record_channel_client_parent_class)->finalize(object);
+ }
+ 
+-static void
+-record_channel_client_constructed(GObject *object)
+-{
+-    RecordChannelClient *record_client = RECORD_CHANNEL_CLIENT(object);
+-    RedChannel *red_channel = red_channel_client_get_channel(RED_CHANNEL_CLIENT(record_client));
+-    SndChannel *channel = SND_CHANNEL(red_channel);
+-    SndChannelClient *scc = SND_CHANNEL_CLIENT(record_client);
+-
+-    G_OBJECT_CLASS(record_channel_client_parent_class)->constructed(object);
+-
+-    if (channel->volume.volume_nchannels) {
+-        snd_set_command(scc, SND_VOLUME_MUTE_MASK);
+-    }
+-
+-    if (channel->active) {
+-        record_channel_client_start(scc);
+-    }
+-    snd_send(scc);
+-}
+-
+-
+ static void snd_set_record_peer(RedChannel *red_channel, RedClient *client, RedsStream *stream,
+                                 G_GNUC_UNUSED int migration,
+                                 RedChannelCapabilities *caps)
+@@ -1478,6 +1453,43 @@ snd_channel_client_init(SndChannelClient *self)
+ {
+ }
+ 
++static gboolean playback_channel_client_initable_init(GInitable *initable,
++                                                      GCancellable *cancellable,
++                                                      GError **error)
++{
++    gboolean success;
++    RedClient *red_client = red_channel_client_get_client(RED_CHANNEL_CLIENT(initable));
++    SndChannelClient *scc = SND_CHANNEL_CLIENT(initable);
++    RedChannel *red_channel = red_channel_client_get_channel(RED_CHANNEL_CLIENT(initable));
++    SndChannel *channel = SND_CHANNEL(red_channel);
++
++    success = playback_channel_client_parent_initable_iface->init(initable, cancellable, error);
++    if (!success) {
++        return FALSE;
++    }
++
++    if (!red_client_during_migrate_at_target(red_client)) {
++        snd_set_command(scc, SND_PLAYBACK_MODE_MASK);
++        if (channel->volume.volume_nchannels) {
++            snd_set_command(scc, SND_VOLUME_MUTE_MASK);
++        }
++    }
++
++    if (channel->active) {
++        playback_channel_client_start(scc);
++    }
++    snd_send(SND_CHANNEL_CLIENT(initable));
++
++    return TRUE;
++}
++
++static void playback_channel_client_initable_interface_init(GInitableIface *iface)
++{
++    playback_channel_client_parent_initable_iface = g_type_interface_peek_parent (iface);
++
++    iface->init = playback_channel_client_initable_init;
++}
++
+ static void
+ playback_channel_client_class_init(PlaybackChannelClientClass *klass)
+ {
+@@ -1505,11 +1517,45 @@ playback_channel_client_init(PlaybackChannelClient *playback)
+     snd_playback_alloc_frames(playback);
+ }
+ 
++static gboolean record_channel_client_initable_init(GInitable *initable,
++                                                    GCancellable *cancellable,
++                                                    GError **error)
++{
++    gboolean success;
++    RecordChannelClient *record_client = RECORD_CHANNEL_CLIENT(initable);
++    RedChannel *red_channel = red_channel_client_get_channel(RED_CHANNEL_CLIENT(record_client));
++    SndChannel *channel = SND_CHANNEL(red_channel);
++    SndChannelClient *scc = SND_CHANNEL_CLIENT(record_client);
++
++    success = record_channel_client_parent_initable_iface->init(initable, cancellable, error);
++    if (!success) {
++        return FALSE;
++    }
++
++    if (channel->volume.volume_nchannels) {
++        snd_set_command(scc, SND_VOLUME_MUTE_MASK);
++    }
++
++    if (channel->active) {
++        record_channel_client_start(scc);
++    }
++    snd_send(SND_CHANNEL_CLIENT(initable));
++
++    return TRUE;
++}
++
++static void record_channel_client_initable_interface_init(GInitableIface *iface)
++{
++    record_channel_client_parent_initable_iface = g_type_interface_peek_parent (iface);
++
++    iface->init = record_channel_client_initable_init;
++}
++
++
+ static void
+ record_channel_client_class_init(RecordChannelClientClass *klass)
+ {
+     GObjectClass *object_class = G_OBJECT_CLASS(klass);
+-    object_class->constructed = record_channel_client_constructed;
+     object_class->finalize = record_channel_client_finalize;
+ }
+ 
+-- 
+2.17.1
+

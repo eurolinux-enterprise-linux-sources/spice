@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Frediano Ziglio <fziglio@redhat.com>
+Date: Fri, 6 Oct 2017 08:57:42 +0100
+Subject: [spice-server] red-channel: Remove
+ red_channel_init_outgoing_messages_window
+
+This function does not make much sense anymore.
+Is called by RedVmcChannel which doesn't use RedChannelClient ACKs
+so the variable changed are not used.
+Moreover, at red_vmc_channel_constructed() time, there will be no
+clients yet, so red_channel_init_outgoing_messages() will be a no-op.
+
+Signed-off-by: Frediano Ziglio <fziglio@redhat.com>
+Acked-by: Christophe Fergeau <cfergeau@redhat.com>
+---
+ server/red-channel.c | 8 --------
+ server/red-channel.h | 3 ---
+ server/spicevmc.c    | 2 --
+ 3 files changed, 13 deletions(-)
+
+diff --git a/server/red-channel.c b/server/red-channel.c
+index b5094829e..8c507f202 100644
+--- a/server/red-channel.c
++++ b/server/red-channel.c
+@@ -421,14 +421,6 @@ void red_channel_push(RedChannel *channel)
+     g_list_foreach(channel->priv->clients, (GFunc)red_channel_client_push, NULL);
+ }
+ 
+-// TODO: this function doesn't make sense because the window should be client (WAN/LAN)
+-// specific
+-void red_channel_init_outgoing_messages_window(RedChannel *channel)
+-{
+-    g_list_foreach(channel->priv->clients,
+-                   (GFunc)red_channel_client_init_outgoing_messages_window, NULL);
+-}
+-
+ void red_channel_pipes_add(RedChannel *channel, RedPipeItem *item)
+ {
+     RedChannelClient *rcc;
+diff --git a/server/red-channel.h b/server/red-channel.h
+index e0fe94fec..281ed0c9e 100644
+--- a/server/red-channel.h
++++ b/server/red-channel.h
+@@ -157,9 +157,6 @@ void red_channel_destroy(RedChannel *channel);
+ /* return true if all the channel clients support the cap */
+ bool red_channel_test_remote_cap(RedChannel *channel, uint32_t cap);
+ 
+-/* should be called when a new channel is ready to send messages */
+-void red_channel_init_outgoing_messages_window(RedChannel *channel);
+-
+ // helper to push a new item to all channels
+ typedef RedPipeItem *(*new_pipe_item_t)(RedChannelClient *rcc, void *data, int num);
+ int red_channel_pipes_new_add(RedChannel *channel, new_pipe_item_t creator, void *data);
+diff --git a/server/spicevmc.c b/server/spicevmc.c
+index 6b9b96fc8..a1685483d 100644
+--- a/server/spicevmc.c
++++ b/server/spicevmc.c
+@@ -246,8 +246,6 @@ red_vmc_channel_constructed(GObject *object)
+     red_channel_set_cap(RED_CHANNEL(self), SPICE_SPICEVMC_CAP_DATA_COMPRESS_LZ4);
+ #endif
+ 
+-    red_channel_init_outgoing_messages_window(RED_CHANNEL(self));
+-
+     reds_register_channel(reds, RED_CHANNEL(self));
+ }
+ 

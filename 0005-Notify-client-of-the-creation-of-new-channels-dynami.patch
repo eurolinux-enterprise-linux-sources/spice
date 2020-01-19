@@ -1,0 +1,179 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Frediano Ziglio <fziglio@redhat.com>
+Date: Thu, 24 Aug 2017 23:37:25 +0100
+Subject: [spice-server] Notify client of the creation of new channels
+ dynamically
+
+This allows the server to add channels after the client is connected.
+
+Signed-off-by: Frediano Ziglio <fziglio@redhat.com>
+Acked-by: Jonathon Jongsma <jjongsma@redhat.com>
+---
+ server/main-channel-client.c | 51 ++++++++++++++++++++++++++++++++++++++++++++
+ server/main-channel-client.h |  3 +++
+ server/main-channel.c        |  6 ++++++
+ server/main-channel.h        |  3 +++
+ server/reds.c                |  2 ++
+ 5 files changed, 65 insertions(+)
+
+diff --git a/server/main-channel-client.c b/server/main-channel-client.c
+index b7b60eddb..61a2830fa 100644
+--- a/server/main-channel-client.c
++++ b/server/main-channel-client.c
+@@ -62,6 +62,7 @@ struct MainChannelClientPrivate {
+     int mig_wait_prev_try_seamless;
+     int init_sent;
+     int seamless_mig_dst;
++    bool initial_channels_list_sent;
+     uint8_t recv_buf[MAIN_CHANNEL_RECEIVE_BUF_SIZE];
+ };
+ 
+@@ -119,6 +120,12 @@ typedef struct RedMultiMediaTimePipeItem {
+     uint32_t time;
+ } RedMultiMediaTimePipeItem;
+ 
++typedef struct RedRegisteredChannelPipeItem {
++    RedPipeItem base;
++    uint32_t channel_type;
++    uint32_t channel_id;
++} RedRegisteredChannelPipeItem;
++
+ #define ZERO_BUF_SIZE 4096
+ 
+ static const uint8_t zero_page[ZERO_BUF_SIZE] = {0};
+@@ -446,6 +453,20 @@ RedPipeItem *main_multi_media_time_item_new(uint32_t mm_time)
+     return &item->base;
+ }
+ 
++RedPipeItem *registered_channel_item_new(RedChannel *channel)
++{
++    RedRegisteredChannelPipeItem *item;
++
++    item = g_new0(RedRegisteredChannelPipeItem, 1);
++    red_pipe_item_init(&item->base, RED_PIPE_ITEM_TYPE_MAIN_REGISTERED_CHANNEL);
++
++    uint32_t type, id;
++    g_object_get(channel, "channel-type", &type, "id", &id, NULL);
++    item->channel_type = type;
++    item->channel_id = id;
++    return &item->base;
++}
++
+ void main_channel_client_handle_migrate_connected(MainChannelClient *mcc,
+                                                   int success,
+                                                   int seamless)
+@@ -927,6 +948,25 @@ static void main_channel_marshall_agent_connected(SpiceMarshaller *m,
+     spice_marshall_msg_main_agent_connected_tokens(m, &connected);
+ }
+ 
++static void main_channel_marshall_registered_channel(RedChannelClient *rcc,
++                                                     SpiceMarshaller *m,
++                                                     RedRegisteredChannelPipeItem *item)
++{
++    struct {
++        SpiceMsgChannels info;
++        SpiceChannelId ids[1];
++    } channels_info_buffer;
++    SpiceMsgChannels* channels_info = &channels_info_buffer.info;
++
++    red_channel_client_init_send_data(rcc, SPICE_MSG_MAIN_CHANNELS_LIST);
++
++    channels_info->channels[0].type = item->channel_type;
++    channels_info->channels[0].id = item->channel_id;
++    channels_info->num_of_channels = 1;
++
++    spice_marshall_msg_main_channels_list(m, channels_info);
++}
++
+ void main_channel_client_send_item(RedChannelClient *rcc, RedPipeItem *base)
+ {
+     MainChannelClient *mcc = MAIN_CHANNEL_CLIENT(rcc);
+@@ -947,6 +987,7 @@ void main_channel_client_send_item(RedChannelClient *rcc, RedPipeItem *base)
+     switch (base->type) {
+         case RED_PIPE_ITEM_TYPE_MAIN_CHANNELS_LIST:
+             main_channel_marshall_channels(rcc, m, base);
++            mcc->priv->initial_channels_list_sent = true;
+             break;
+         case RED_PIPE_ITEM_TYPE_MAIN_PING:
+             main_channel_marshall_ping(rcc, m,
+@@ -1003,6 +1044,16 @@ void main_channel_client_send_item(RedChannelClient *rcc, RedPipeItem *base)
+         case RED_PIPE_ITEM_TYPE_MAIN_AGENT_CONNECTED_TOKENS:
+             main_channel_marshall_agent_connected(m, rcc, base);
+             break;
++        case RED_PIPE_ITEM_TYPE_MAIN_REGISTERED_CHANNEL:
++            /* The spice protocol requires that the server receive a ATTACH_CHANNELS
++             * message from the client before sending any CHANNEL_LIST message. If
++             * we've already sent our initial CHANNELS_LIST message, then it should be
++             * safe to send new ones for newly-registered channels. */
++            if (mcc->priv->initial_channels_list_sent) {
++                main_channel_marshall_registered_channel(rcc, m,
++                    SPICE_UPCAST(RedRegisteredChannelPipeItem, base));
++            }
++            break;
+         default:
+             break;
+     };
+diff --git a/server/main-channel-client.h b/server/main-channel-client.h
+index 26b7e20b8..2cf2e3424 100644
+--- a/server/main-channel-client.h
++++ b/server/main-channel-client.h
+@@ -122,12 +122,15 @@ enum {
+     RED_PIPE_ITEM_TYPE_MAIN_NAME,
+     RED_PIPE_ITEM_TYPE_MAIN_UUID,
+     RED_PIPE_ITEM_TYPE_MAIN_AGENT_CONNECTED_TOKENS,
++    RED_PIPE_ITEM_TYPE_MAIN_REGISTERED_CHANNEL,
+ };
+ 
+ RedPipeItem *main_mouse_mode_item_new(SpiceMouseMode current_mode, int is_client_mouse_allowed);
+ 
+ RedPipeItem *main_multi_media_time_item_new(uint32_t mm_time);
+ 
++RedPipeItem *registered_channel_item_new(RedChannel *channel);
++
+ G_END_DECLS
+ 
+ #endif /* MAIN_CHANNEL_CLIENT_H_ */
+diff --git a/server/main-channel.c b/server/main-channel.c
+index eca857f6b..4dc130e40 100644
+--- a/server/main-channel.c
++++ b/server/main-channel.c
+@@ -149,6 +149,12 @@ static void main_channel_fill_mig_target(MainChannel *main_channel, RedsMigSpice
+     main_channel->mig_target.sport = mig_target->sport;
+ }
+ 
++void
++main_channel_registered_new_channel(MainChannel *main_chan, RedChannel *channel)
++{
++    red_channel_pipes_add(RED_CHANNEL(main_chan), registered_channel_item_new(channel));
++}
++
+ void main_channel_migrate_switch(MainChannel *main_chan, RedsMigSpice *mig_target)
+ {
+     main_channel_fill_mig_target(main_chan, mig_target);
+diff --git a/server/main-channel.h b/server/main-channel.h
+index eb3bcec3a..0cb5be728 100644
+--- a/server/main-channel.h
++++ b/server/main-channel.h
+@@ -66,6 +66,9 @@ void main_channel_push_mouse_mode(MainChannel *main_chan, SpiceMouseMode current
+ void main_channel_push_agent_connected(MainChannel *main_chan);
+ void main_channel_push_agent_disconnected(MainChannel *main_chan);
+ void main_channel_push_multi_media_time(MainChannel *main_chan, uint32_t time);
++/* tell MainChannel we have a new channel ready */
++void main_channel_registered_new_channel(MainChannel *main_chan,
++                                         RedChannel *channel);
+ 
+ int main_channel_is_connected(MainChannel *main_chan);
+ 
+diff --git a/server/reds.c b/server/reds.c
+index 1b1ab94ea..99b1fd76b 100644
+--- a/server/reds.c
++++ b/server/reds.c
+@@ -387,6 +387,8 @@ void reds_register_channel(RedsState *reds, RedChannel *channel)
+ {
+     spice_assert(reds);
+     reds->channels = g_list_prepend(reds->channels, channel);
++    // create new channel in the client if possible
++    main_channel_registered_new_channel(reds->main_channel, channel);
+ }
+ 
+ void reds_unregister_channel(RedsState *reds, RedChannel *channel)
