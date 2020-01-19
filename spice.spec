@@ -1,6 +1,6 @@
 Name:           spice
 Version:        0.14.0
-Release:        6%{?dist}
+Release:        6%{?dist}.1
 Summary:        Implements the SPICE protocol
 Group:          User Interface/Desktops
 License:        LGPLv2+
@@ -32,6 +32,7 @@ Patch23:        0023-sound-Don-t-mute-recording-when-client-reconnects.patch
 Patch24:        0024-tls-Parse-spice.cnf-OpenSSL-configuration-file.patch
 Patch25:        0025-ssl-Allow-to-use-ECDH-ciphers-with-OpenSSL-1.0.patch
 Patch26:        0026-Fix-flexible-array-buffer-overflow.patch
+Patch27:        0027-memslot-Fix-off-by-one-error-in-group-slot-boundary-.patch
 
 # https://bugzilla.redhat.com/show_bug.cgi?id=613529
 %if 0%{?rhel}
@@ -121,6 +122,10 @@ mkdir -p %{buildroot}%{_libexecdir}
 
 
 %changelog
+* Thu Jan 24 2019 Christophe Fergeau <cfergeau@redhat.com> - 0.14.0-6.1
+- Fix off-by-one error during guest-to-host memory address conversion
+  Resolves: CVE-2019-3813
+
 * Thu Aug 09 2018 Frediano Ziglio <fziglio@redhat.com> - 0.14.0-6
 - Fix flexible array buffer overflow
   Resolves: rhbz#1596008
