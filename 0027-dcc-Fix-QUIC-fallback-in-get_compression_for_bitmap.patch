@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christophe Fergeau <cfergeau@redhat.com>
+Date: Fri, 20 Jul 2018 11:44:51 +0200
+Subject: [PATCH] dcc: Fix QUIC fallback in get_compression_for_bitmap()
+
+There was a small regression introduced in get_compression_for_bitmap()
+by f401eb07f dcc: Rewrite dcc_image_compress.
+If SPICE_IMAGE_COMPRESSION_AUTO_GLZ is specified, and the bitmap has a
+stride which is bigger than its width (ie it has padding), then
+get_compression_for_bitmap() will return SPICE_IMAGE_COMPRESSION_OFF
+while in that case, we used to use QUIC for compression.
+
+This happens because that function in the AUTO_GLZ case first checks if
+QUIC should be used, if not, it decides to use GLZ, but then decides it
+can't because of the stride, so falls back to OFF, while it used to
+fall back to QUIC.
+
+This commit only slightly reworks a preexisting if (!can_lz_compress())
+check so that it's unconditional rather than depending on the previous
+checks having been unsuccessful.
+
+This issue could be observed by using a spice-html5 without support for
+uncompressed bitmaps with end-of-line padding by simply starting a f28
+VM and connecting to it/moving the mouse cursor in it.
+
+Signed-off-by: Christophe Fergeau <cfergeau@redhat.com>
+Acked-by: Frediano Ziglio <fziglio@redhat.com>
+---
+ server/dcc.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/server/dcc.c b/server/dcc.c
+index 3bf75a7..b632905 100644
+--- a/server/dcc.c
++++ b/server/dcc.c
+@@ -806,8 +806,10 @@ static SpiceImageCompression get_compression_for_bitmap(SpiceBitmap *bitmap,
+                     bitmap_get_graduality_level(bitmap) == BITMAP_GRADUAL_HIGH) {
+                     return SPICE_IMAGE_COMPRESSION_QUIC;
+                 }
+-            } else if (!can_lz_compress(bitmap) ||
+-                       drawable->copy_bitmap_graduality == BITMAP_GRADUAL_HIGH) {
++            } else if (drawable->copy_bitmap_graduality == BITMAP_GRADUAL_HIGH) {
++                return SPICE_IMAGE_COMPRESSION_QUIC;
++            }
++            if (!can_lz_compress(bitmap)) {
+                 return SPICE_IMAGE_COMPRESSION_QUIC;
+             }
+         }

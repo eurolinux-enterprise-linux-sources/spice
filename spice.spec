@@ -1,6 +1,6 @@
 Name:           spice
 Version:        0.14.0
-Release:        6%{?dist}.1
+Release:        7%{?dist}
 Summary:        Implements the SPICE protocol
 Group:          User Interface/Desktops
 License:        LGPLv2+
@@ -32,7 +32,8 @@ Patch23:        0023-sound-Don-t-mute-recording-when-client-reconnects.patch
 Patch24:        0024-tls-Parse-spice.cnf-OpenSSL-configuration-file.patch
 Patch25:        0025-ssl-Allow-to-use-ECDH-ciphers-with-OpenSSL-1.0.patch
 Patch26:        0026-Fix-flexible-array-buffer-overflow.patch
-Patch27:        0027-memslot-Fix-off-by-one-error-in-group-slot-boundary-.patch
+Patch27:        0027-dcc-Fix-QUIC-fallback-in-get_compression_for_bitmap.patch
+Patch28:        0028-memslot-Fix-off-by-one-error-in-group-slot-boundary-.patch
 
 # https://bugzilla.redhat.com/show_bug.cgi?id=613529
 %if 0%{?rhel}
@@ -65,6 +66,9 @@ variety of machine architectures.
 Summary:        Implements the server side of the SPICE protocol
 Group:          System Environment/Libraries
 Obsoletes:      spice-client < %{version}-%{release}
+# Ensure SSL_CONF_CTX_set_ssl_ctx (needed by Patch24) is present
+# https://bugzilla.redhat.com/show_bug.cgi?id=1627693
+Requires:       openssl-libs >= 1.0.2k-16
 
 %description server
 The Simple Protocol for Independent Computing Environments (SPICE) is
@@ -112,7 +116,7 @@ mkdir -p %{buildroot}%{_libexecdir}
 
 
 %files server
-%doc COPYING README NEWS
+%doc COPYING README NEWS docs/spice.cnf.sample
 %{_libdir}/libspice-server.so.1*
 
 %files server-devel
@@ -122,9 +126,14 @@ mkdir -p %{buildroot}%{_libexecdir}
 
 
 %changelog
-* Thu Jan 24 2019 Christophe Fergeau <cfergeau@redhat.com> - 0.14.0-6.1
+* Tue Dec 18 2018 Christophe Fergeau <cfergeau@redhat.com> - 0.14.0-7
 - Fix off-by-one error during guest-to-host memory address conversion
   Resolves: CVE-2019-3813
+- Add patch for upstream commit 48179332d9da0. This should help with corrupted
+  spice-html5 displays
+  Resolves: rhbz#1573739
+- Add missing minimum openssl version Requires for patch #24
+  Resolves: rhbz#1627693
 
 * Thu Aug 09 2018 Frediano Ziglio <fziglio@redhat.com> - 0.14.0-6
 - Fix flexible array buffer overflow

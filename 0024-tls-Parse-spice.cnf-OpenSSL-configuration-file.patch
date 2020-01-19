@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Christophe Fergeau <cfergeau@redhat.com>
 Date: Mon, 18 Jun 2018 12:39:37 +0200
-Subject: [spice-server] tls: Parse spice.cnf OpenSSL configuration file
+Subject: [PATCH] tls: Parse spice.cnf OpenSSL configuration file
 
 SPICE tries to use the OpenSSL system-wide defaults as much as possible
 for the TLS ciphers and protocols it uses. However, this is not enough
@@ -22,9 +22,11 @@ land in RHEL.
 
 Signed-off-by: Christophe Fergeau <cfergeau@redhat.com>
 ---
- docs/Makefile.am |   1 +
- server/reds.c    | 102 +++++++++++++++++++++++++++++++++++++++++++++++
- 2 files changed, 103 insertions(+)
+ docs/Makefile.am      |   1 +
+ docs/spice.cnf.sample |  15 +++++++
+ server/reds.c         | 102 ++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 118 insertions(+)
+ create mode 100644 docs/spice.cnf.sample
 
 diff --git a/docs/Makefile.am b/docs/Makefile.am
 index 45667a6..909ed15 100644
@@ -38,6 +40,27 @@ index 45667a6..909ed15 100644
  	$(NULL)
  
  if BUILD_MANUAL
+diff --git a/docs/spice.cnf.sample b/docs/spice.cnf.sample
+new file mode 100644
+index 0000000..e5404ae
+--- /dev/null
++++ b/docs/spice.cnf.sample
+@@ -0,0 +1,15 @@
++# SPICE OpenSSL configuration file
++#
++# Sample configuration file for SPICE TLS communication
++# Edit the file according to your needs, and put it in
++# /etc/pki/tls/spice.cnf
++#
++# See "SUPPORTED CONFIGURATION FILE COMMANDS" in SSL_CONF_cmd(3)
++# for the valid options, as well a ciphers(1) for the format
++# of CipherString
++
++# Configure available ciphers
++CipherString = DEFAULT:-RC4:-3DES:-DES
++
++# Only enable TLSv1.2 (and newer TLS versions the day OpenSSL supports them)
++Protocol = ALL,-SSLv2,-SSLv3,-TLSv1,-TLSv1.1
 diff --git a/server/reds.c b/server/reds.c
 index 0af5643..846e44d 100644
 --- a/server/reds.c
